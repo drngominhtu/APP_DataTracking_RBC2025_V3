@@ -18,7 +18,7 @@ class GraphWidget(QtWidgets.QWidget):
         self.is_recording = False
         self.start_time = 0
         self.last_update_time = 0
-        self.update_interval = 0.2  # Bước nhảy 0.2s
+        self.update_interval = 0.025  # Bước nhảy 0.2s
         self.selected_variables = []
         self.record_data = {}
         

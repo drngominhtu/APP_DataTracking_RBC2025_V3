@@ -38,13 +38,25 @@ class MqttClient(QObject):
         self.client.disconnect()
         
     def subscribe(self, topic):
-        result = self.client.subscribe(topic)
-        if result[0] == mqtt.MQTT_ERR_SUCCESS:
-            self.subscribed_topics.add(topic)
-            print(f"Subscribed to {topic}")
-            return True
-        else:
-            print(f"Failed to subscribe to {topic}")
+        """Subscribe to the specified topic"""
+        try:
+            if not topic or topic.strip() == "":
+                print("Cannot subscribe to empty topic")
+                return False
+
+            if not self.is_connected():
+                print("Not connected to MQTT broker")
+                return False
+
+            result, _ = self.client.subscribe(topic)
+            if result == 0:  # MQTT_ERR_SUCCESS
+                print(f"Successfully subscribed to {topic}")
+                return True
+            else:
+                print(f"Failed to subscribe to {topic}")
+                return False
+        except Exception as e:
+            print(f"Exception subscribing to topic: {e}")
             return False
             
     def unsubscribe(self, topic):

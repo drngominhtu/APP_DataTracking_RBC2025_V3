@@ -3,9 +3,10 @@ import sys
 import paho.mqtt.client as mqtt
 from visualization import Visualization
 from mqtt_client import MqttClient
-from config import (MQTT_BROKER, MQTT_PORT, MQTT_TOPIC, MQTT_USERNAME,
-                   APP_TITLE, APP_WIDTH, APP_HEIGHT, APP_STYLE, DARK_PALETTE,
+from config import (MQTT_BROKER, MQTT_PORT, MQTT_TOPIC, MQTT_USERNAME, MQTT_PASSWORD, MQTT_CLIENT_ID,
+                   APP_TITLE, APP_VERSION, APP_WIDTH, APP_HEIGHT, APP_STYLE, DARK_PALETTE,
                    COLOR_CONNECTED, COLOR_DISCONNECTED)
+from connection_dialog import ConnectionDialog
 
 class TopicBrowserDialog(QtWidgets.QDialog):
     """Dialog to browse and select MQTT topics"""
@@ -75,6 +76,13 @@ class MainApp(QtWidgets.QWidget):
         # Create menu bar
         self.create_menu_bar()
         
+        # Tạo toolbar
+        self.toolbar = QtWidgets.QToolBar("Main Toolbar")
+        self.connection_button = QtWidgets.QPushButton("Connection Settings")
+        self.connection_button.clicked.connect(self.open_connection_dialog)
+        self.toolbar.addWidget(self.connection_button)
+        self.layout.addWidget(self.toolbar)
+    
         # Connection status bar - thu nhỏ
         self.connection_bar = QtWidgets.QHBoxLayout()
         self.connection_bar.setContentsMargins(0, 0, 0, 0)
@@ -178,27 +186,33 @@ class MainApp(QtWidgets.QWidget):
         """Create menu bar at the top"""
         self.menu_bar = QtWidgets.QMenuBar()
         self.menu_bar.setNativeMenuBar(False)  # Force non-native menu bar
-    
+
         # File menu
-        file_menu = self.menu_bar.addMenu("File")
-        file_menu.addAction("Export All Data", self.export_all_data)
-        file_menu.addAction("Save Settings", self.save_settings)
-        file_menu.addAction("Load Settings", self.load_settings)
-        file_menu.addSeparator()
-        file_menu.addAction("Exit", self.close)
-    
+        self.menu_file = self.menu_bar.addMenu("File")
+        self.menu_file.addAction("Export All Data", self.export_all_data)
+        self.menu_file.addAction("Save Settings", self.save_settings)
+        self.menu_file.addAction("Load Settings", self.load_settings)
+        
+        # Thêm Connection Settings vào menu File
+        self.connection_action = QtWidgets.QAction("Connection Settings", self)
+        self.connection_action.triggered.connect(self.open_connection_dialog)
+        self.menu_file.addAction(self.connection_action)
+        
+        self.menu_file.addSeparator()
+        self.menu_file.addAction("Exit", self.close)
+
         # Connection menu
         connection_menu = self.menu_bar.addMenu("Connection")
         connection_menu.addAction("Connect", lambda: self.mqtt_client.connect())
         connection_menu.addAction("Disconnect", lambda: self.mqtt_client.disconnect())
         connection_menu.addSeparator()
         connection_menu.addAction("Settings", self.show_connection_settings)
-    
+
         # Help menu
         help_menu = self.menu_bar.addMenu("Help")
         help_menu.addAction("About", self.show_about_dialog)
         help_menu.addAction("Help", self.show_help_dialog)
-    
+
         self.layout.setMenuBar(self.menu_bar)
     
         # No need for these methods anymore
@@ -385,6 +399,88 @@ class MainApp(QtWidgets.QWidget):
             print(f"Error loading settings: {e}")
             return None
 
+    # Add a method to handle opening the connection dialog
+    def open_connection_dialog(self):
+        """Open the connection configuration dialog"""
+        try:
+            dialog = ConnectionDialog(self)
+            dialog.connectionUpdated.connect(self.handle_connection_update)
+            dialog.exec_()
+        except Exception as e:
+            print(f"Error opening connection dialog: {e}")
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Dialog Error",
+                f"Error opening connection settings: {str(e)}"
+            )
+
+    # Add a method to handle connection updates
+    def handle_connection_update(self, settings):
+        """Handle updated connection settings"""
+        try:
+            # Connect with new settings
+            connected = self.connect_mqtt(
+                broker=settings["MQTT_BROKER"],
+                port=settings["MQTT_PORT"],
+                username=settings["MQTT_USERNAME"],
+                password=settings["MQTT_PASSWORD"],
+                client_id=settings["MQTT_CLIENT_ID"]
+            )
+            
+            # Subscribe to the specified topic if connected
+            if connected and settings["MQTT_TOPIC"]:  # Check if topic is not empty
+                try:
+                    self.mqtt_client.subscribe(settings["MQTT_TOPIC"])
+                    self.update_subscription_label(settings["MQTT_TOPIC"])
+                except Exception as e:
+                    print(f"Error subscribing to topic: {e}")
+                    QtWidgets.QMessageBox.warning(
+                        self, 
+                        "Subscription Error",
+                        f"Could not subscribe to topic '{settings['MQTT_TOPIC']}': {str(e)}"
+                    )
+        except Exception as e:
+            print(f"Error updating connection: {e}")
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Connection Error",
+                f"Failed to connect with new settings: {str(e)}"
+            )
+
+    def connect_mqtt(self, broker=MQTT_BROKER, port=MQTT_PORT, username=MQTT_USERNAME, 
+            password="", client_id=MQTT_CLIENT_ID):
+        """Connect to MQTT broker with given settings"""
+        try:
+            # Disconnect current MQTT client if exists
+            if hasattr(self, 'mqtt_client') and self.mqtt_client.is_connected():
+                self.mqtt_client.disconnect()
+            
+            # Create new MQTT client
+            self.mqtt_client = MqttClient(broker, port)
+            
+            # Set credentials if provided
+            if username:
+                self.mqtt_client.client.username_pw_set(username, password)
+            
+            # Connect signals
+            self.mqtt_client.message_received.connect(self.on_message_received)
+            self.mqtt_client.connection_changed.connect(self.on_connection_changed)
+            self.mqtt_client.topic_detected.connect(self.on_topic_detected)
+            
+            # Update status bar
+            self.status_label.setText(f"MQTT: {broker}:{port}")
+            
+            # Connect to broker
+            return self.mqtt_client.connect()
+        except Exception as e:
+            print(f"Error connecting to MQTT broker: {e}")
+            QtWidgets.QMessageBox.critical(
+                self, 
+                "Connection Error", 
+                f"Failed to connect to MQTT broker: {str(e)}"
+            )
+            return False
+
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
@@ -405,5 +501,6 @@ if __name__ == "__main__":
     app.setPalette(palette)
     
     main_app = MainApp()
+    
     main_app.show()
     sys.exit(app.exec_())
